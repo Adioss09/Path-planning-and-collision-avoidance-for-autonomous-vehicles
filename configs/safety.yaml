@@ -1,0 +1,7 @@
+safety:
+  critical_ttc: 1.5
+  high_ttc: 2.5
+  medium_ttc: 4.0
+  minimum_clearance_m: 1.5
+  emergency_brake_deceleration: 8.0 # m/s^2
+  max_comfortable_deceleration: 3.0 # m/s^2

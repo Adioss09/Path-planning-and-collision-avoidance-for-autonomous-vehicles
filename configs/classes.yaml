@@ -1,0 +1,38 @@
+# IDD Class mapping for the PoC
+
+dynamic_road_users:
+  - car
+  - bus
+  - truck
+  - autorickshaw
+  - motorcycle
+  - bicycle
+  - pedestrian
+  - rider
+  - animal
+
+static_obstacles:
+  - traffic sign
+  - traffic light
+  - pole
+  - building
+  - wall
+  - fence
+  - vegetation
+  - terrain
+
+environment:
+  - road
+  - sidewalk
+  - parking
+
+# Groupings for simpler logic
+critical_classes:
+  - pedestrian
+  - bicycle
+  - motorcycle
+  - rider
+  - animal
+
+ignore_classes:
+  - sky

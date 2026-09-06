@@ -1,0 +1,11 @@
+planner:
+  grid_resolution: 0.5 # meters per cell
+  planning_horizon: 50.0 # meters
+  weights:
+    distance: 1.0
+    collision_risk: 100.0
+    obstacle_proximity: 20.0
+    path_curvature: 5.0
+    smoothness: 2.0
+    replanning_penalty: 50.0
+  lookahead_distance: 10.0 # for vehicle control
