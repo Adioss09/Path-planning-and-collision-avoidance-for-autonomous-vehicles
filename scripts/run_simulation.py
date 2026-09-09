@@ -73,8 +73,8 @@ class Simulation:
         self.last_eval_time = -5.0
         
         self.current_lane = 2
-        self.target_lane = 2
-        self.safe_alts_str = "1, 2, 3"
+        self.target_lane = 'STRAIGHT' if self.scenario_name == 'intersection' else 2
+        self.safe_alts_str = "NONE"
         self.replan_reason = "Initial"
         
         # Logger Setup
@@ -92,29 +92,43 @@ class Simulation:
         self.replanned_markers = [] # list of (x, y, event_id)
         
     def setup_scenario(self):
-        # Strict World coordinates
         self.vehicle = KinematicBicycleModel(x=120.0, y=750.0, yaw=-math.pi/2, v=40.0)
         self.obstacles = []
         
         if self.scenario_name == 'market':
             self.obstacles = [
-                {'x': 60.0, 'y': 500.0, 'vx': 0.0, 'vy': 5.0, 'type': 'pedestrian', 'id': 1},
-                {'x': 120.0, 'y': 350.0, 'vx': 0.0, 'vy': -10.0, 'type': 'bicycle', 'id': 2},
-                {'x': 180.0, 'y': 200.0, 'vx': 0.0, 'vy': -5.0, 'type': 'pushcart', 'id': 3}
+                {'x': 60.0, 'y': 500.0, 'vx': 0.0, 'vy': 5.0, 'type': 'pedestrian', 'id': 'PED #01'},
+                {'x': 120.0, 'y': 350.0, 'vx': 0.0, 'vy': -10.0, 'type': 'bicycle', 'id': 'BIKE #02'},
+                {'x': 180.0, 'y': 200.0, 'vx': 0.0, 'vy': -5.0, 'type': 'pushcart', 'id': 'CART #03'}
             ]
         elif self.scenario_name == 'cattle':
-            # Cattle starts far off the road on the right, moves left fast when vehicle approaches
             self.obstacles = [
-                {'x': 300.0, 'y': 450.0, 'vx': -35.0, 'vy': 0.0, 'type': 'animal', 'id': 1}
+                {'x': 300.0, 'y': 450.0, 'vx': -35.0, 'vy': 0.0, 'type': 'animal', 'id': 'CATTLE #01'}
             ]
         elif self.scenario_name == 'intersection':
-            self.goal = (120.0, 100.0)
+            self.vehicle = KinematicBicycleModel(x=566.0, y=750.0, yaw=-math.pi/2, v=40.0)
+            self.goal = (566.0, 50.0) # Primary goal
+            
             self.obstacles = [
-                {'x': 0.0, 'y': 400.0, 'vx': 40.0, 'vy': 0.0, 'type': 'car', 'id': 1},
+                # Crossing West to East (Horizontal bottom lane)
+                {'x': -50.0, 'y': 466.0, 'vx': 38.0, 'vy': 0.0, 'type': 'auto', 'id': 'AUTO #01'},
+                {'x': 150.0, 'y': 433.0, 'vx': 42.0, 'vy': 0.0, 'type': 'car', 'id': 'CAR #02'},
+                
+                # Crossing East to West (Horizontal top lane)
+                {'x': 950.0, 'y': 333.0, 'vx': -45.0, 'vy': 0.0, 'type': 'car', 'id': 'CAR #03'},
+                {'x': 800.0, 'y': 366.0, 'vx': -35.0, 'vy': 0.0, 'type': 'bike', 'id': 'BIKE #04'},
+                
+                # North to South (Vertical left lane)
+                {'x': 433.0, 'y': -50.0, 'vx': 0.0, 'vy': 40.0, 'type': 'car', 'id': 'CAR #05'},
+                {'x': 466.0, 'y': 150.0, 'vx': 0.0, 'vy': 35.0, 'type': 'bike', 'id': 'BIKE #06'},
+                
+                # Pedestrians near intersection
+                {'x': 400.0, 'y': 250.0, 'vx': 12.0, 'vy': 0.0, 'type': 'pedestrian', 'id': 'PED #07'},
+                {'x': 600.0, 'y': 550.0, 'vx': -10.0, 'vy': 0.0, 'type': 'pedestrian', 'id': 'PED #08'},
             ]
         else: # unmarked
             self.obstacles = [
-                {'x': 120.0, 'y': 400.0, 'vx': 0.0, 'vy': -20.0, 'type': 'car', 'id': 1}
+                {'x': 120.0, 'y': 400.0, 'vx': 0.0, 'vy': -20.0, 'type': 'car', 'id': 'CAR #01'}
             ]
             
         for obs in self.obstacles:
@@ -194,7 +208,11 @@ class Simulation:
                 
         # If we reached the end of the path (which is the mathematical goal)
         if target_idx == len(self.active_path) - 1:
-            goal_dist = math.hypot(self.goal[0] - self.vehicle.x, self.goal[1] - self.vehicle.y)
+            if self.scenario_name == 'intersection':
+                goal_dist = math.hypot(self.active_path[-1][0] - self.vehicle.x, self.active_path[-1][1] - self.vehicle.y)
+            else:
+                goal_dist = math.hypot(self.goal[0] - self.vehicle.x, self.goal[1] - self.vehicle.y)
+                
             if goal_dist < 40.0:
                 self.current_action = 'STOP'
                 return -20.0, 0.0
@@ -224,12 +242,14 @@ class Simulation:
 
     def check_invariants(self):
         """Mathematically verifies that the vehicle and paths obey physical bounds."""
+        if self.scenario_name == 'intersection':
+            return # Different bounds for full 2D area
+            
         # Vehicle must be within the road (30 to 210, with 15px margin)
         assert 15.0 <= self.vehicle.x <= 225.0, f"Vehicle left drivable road! x={self.vehicle.x:.1f}"
         
         if self.active_path:
             # Active path must start exactly at vehicle's last eval position
-            # (Within small delta because of floating point and dt movement between evals)
             start_dist = math.hypot(self.active_path[0][0] - self.vehicle.x, self.active_path[0][1] - self.vehicle.y)
             assert start_dist < 20.0, f"Path disconnected from vehicle! start_dist={start_dist:.1f}"
             
@@ -256,15 +276,24 @@ class Simulation:
         self.current_action = self.decision_engine.decide(self.current_risk)
         
         is_replanning = False
-        self.current_lane = min(self.lanes, key=lambda l: abs(l['x'] - self.vehicle.x))['id']
+        if self.scenario_name != 'intersection':
+            self.current_lane = min(self.lanes, key=lambda l: abs(l['x'] - self.vehicle.x))['id']
+        else:
+            self.current_lane = self.target_lane # Abstract routing
         
         # Generate paths exactly from vehicle state to global goal
         if self.sim_time - self.last_eval_time > 0.2:
             t_start = time.time()
-            cands = self.candidate_planner.generate_candidates(
-                self.vehicle.x, self.vehicle.y, self.vehicle.v, self.sim_time,
-                self.goal[0], self.goal[1], num_points=60
-            )
+            if self.scenario_name == 'intersection':
+                cands = self.candidate_planner.generate_intersection_candidates(
+                    self.vehicle.x, self.vehicle.y, self.vehicle.v, self.sim_time
+                )
+            else:
+                cands = self.candidate_planner.generate_candidates(
+                    self.vehicle.x, self.vehicle.y, self.vehicle.v, self.sim_time,
+                    self.goal[0], self.goal[1], num_points=60
+                )
+                
             self.all_candidates = self.candidate_planner.evaluate_candidates(cands, self.obstacles)
             latency = (time.time() - t_start) * 1000.0
             
@@ -286,6 +315,10 @@ class Simulation:
                     self.replan_reason = "Dynamic Obstacle Avoidance"
                     self.log_path_change(self.target_lane, best_cand['lane_id'], "Obstacle Collision Risk", min_clear, latency)
                     self.target_lane = best_cand['lane_id']
+                    if self.scenario_name == 'intersection':
+                        # Update global visual goal to match chosen route end
+                        self.goal = (best_cand['path'][-1][0], best_cand['path'][-1][1])
+                        
                     is_replanning = True
                     self.replanned_markers.append((self.vehicle.x, self.vehicle.y, self.event_count))
                     
@@ -299,7 +332,6 @@ class Simulation:
         accel, steering = self.pure_pursuit()
         self.vehicle.update(accel, steering, dt)
         
-        # Enforce mathematical invariants
         self.check_invariants()
         
     def draw_dashboard(self):
@@ -330,17 +362,29 @@ class Simulation:
         draw_stat("Action", self.current_action, risk_color)
         
         y += 15
-        draw_stat("Active Path", self.active_path_id, PATH_COLOR)
-        draw_stat("Prev Path", self.prev_path_id, OLD_PATH_COLOR)
-        draw_stat("Current Lane", self.current_lane)
-        draw_stat("Target Lane", self.target_lane)
-        draw_stat("Safe Alts", self.safe_alts_str, (0, 255, 100) if self.safe_alts_str != "NONE" else (255, 0, 0))
+        
+        if self.scenario_name == 'intersection':
+            crossing = sum(1 for obs in self.obstacles if abs(obs['x'] - self.vehicle.x) < 200 and abs(obs['y'] - self.vehicle.y) < 200)
+            draw_stat("Current Route", self.target_lane, PATH_COLOR)
+            draw_stat("Nearby Agents", len(self.obstacles))
+            draw_stat("Crossing Agents", crossing, (255,100,0) if crossing > 0 else (0,255,0))
+            draw_stat("Safe Routes", len(self.safe_alts_str.split(', ')))
+        else:
+            draw_stat("Active Path", self.active_path_id, PATH_COLOR)
+            draw_stat("Prev Path", self.prev_path_id, OLD_PATH_COLOR)
+            draw_stat("Current Lane", self.current_lane)
+            draw_stat("Target Lane", self.target_lane)
+            draw_stat("Safe Alts", self.safe_alts_str, (0, 255, 100) if self.safe_alts_str != "NONE" else (255, 0, 0))
+            
         draw_stat("Reason", self.replan_reason)
         
         y += 15
         draw_stat("Replans", self.event_count)
         draw_stat("Collisions", self.metrics.metrics['collision_count'])
-        goal_dist = math.hypot(self.goal[0] - self.vehicle.x, self.goal[1] - self.vehicle.y)
+        if self.active_path:
+            goal_dist = math.hypot(self.active_path[-1][0] - self.vehicle.x, self.active_path[-1][1] - self.vehicle.y)
+        else:
+            goal_dist = 0.0
         draw_stat("Dist to Goal", f"{goal_dist:.1f} px")
         
         if self.debug:
@@ -355,14 +399,32 @@ class Simulation:
         self.screen.fill(BG_COLOR)
         
         # 1. Road Geometry
-        pygame.draw.rect(self.screen, ROAD_COLOR, (30, 0, 180, self.height))
-        for i in range(1, 3):
-            lx = 30 + (i * 60)
+        if self.scenario_name == 'intersection':
+            # Vertical Road
+            pygame.draw.rect(self.screen, ROAD_COLOR, (400, 0, 200, self.height))
+            # Horizontal Road
+            pygame.draw.rect(self.screen, ROAD_COLOR, (0, 300, self.width - 250, 200))
+            
+            # Intersection Center Square
+            pygame.draw.rect(self.screen, ROAD_COLOR, (400, 300, 200, 200))
+            
+            # Draw Lane Dividers for Intersection
+            # Vertical dividers (N/S)
             for y_line in range(0, self.height, 40):
-                pygame.draw.line(self.screen, LANE_COLOR, (lx, y_line), (lx, y_line + 20), 2)
+                if not (300 < y_line < 500): # Don't draw dashed inside junction
+                    pygame.draw.line(self.screen, LANE_COLOR, (500, y_line), (500, y_line + 20), 2)
+            # Horizontal dividers (E/W)
+            for x_line in range(0, self.width - 250, 40):
+                if not (400 < x_line < 600):
+                    pygame.draw.line(self.screen, LANE_COLOR, (x_line, 400), (x_line + 20, 400), 2)
+        else:
+            pygame.draw.rect(self.screen, ROAD_COLOR, (30, 0, 180, self.height))
+            for i in range(1, 3):
+                lx = 30 + (i * 60)
+                for y_line in range(0, self.height, 40):
+                    pygame.draw.line(self.screen, LANE_COLOR, (lx, y_line), (lx, y_line + 20), 2)
             
         # 2. Paths
-        # Draw candidate paths (DEBUG mode only, to reduce clutter if requested, but we'll show faint)
         if self.debug:
             for cand in self.all_candidates:
                 if len(cand['path']) > 1:
@@ -386,7 +448,7 @@ class Simulation:
                 for px, py, _ in self.active_path[::5]:
                     pygame.draw.circle(self.screen, PATH_COLOR, (int(px), int(py)), 3)
             
-        # 3. Replanned Markers (Exact static world coordinates)
+        # 3. Replanned Markers
         for mx, my, event_id in self.replanned_markers:
             pygame.draw.circle(self.screen, MARKER_COLOR, (int(mx), int(my)), 6)
             marker_text = self.font.render(f"REPLAN #{event_id}", True, MARKER_COLOR)
@@ -411,8 +473,9 @@ class Simulation:
             ox, oy = int(obs['x']), int(obs['y'])
             pygame.draw.circle(self.screen, color, (ox, oy), 15)
             
-            label = self.font.render(obs['type'], True, (255,255,255))
-            self.screen.blit(label, (ox - 20, oy - 25))
+            # Avoid overlapping text by putting it below
+            label = self.font.render(obs['id'], True, (255,255,255))
+            self.screen.blit(label, (ox - 30, oy + 20))
             
             if len(obs['predicted_trajectory']) > 1:
                 pts = [(pt[0], pt[1]) for pt in obs['predicted_trajectory']]
@@ -445,11 +508,13 @@ class Simulation:
             self.step(dt)
             self.render()
             
-            # Goal reached check (Using exact physical world coordinates)
-            if self.vehicle.y <= self.goal[1] + 10.0:
-                print(f"Goal Reached! Replans: {self.event_count}")
-                self.metrics.finish_scenario(success=True)
-                running = False
+            # Goal reached check
+            if self.active_path:
+                goal_dist = math.hypot(self.active_path[-1][0] - self.vehicle.x, self.active_path[-1][1] - self.vehicle.y)
+                if goal_dist < 40.0:
+                    print(f"Goal Reached! Replans: {self.event_count}")
+                    self.metrics.finish_scenario(success=True)
+                    running = False
                 
             self.clock.tick(30)
             

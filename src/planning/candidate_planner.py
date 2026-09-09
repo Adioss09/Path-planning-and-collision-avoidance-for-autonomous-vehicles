@@ -84,6 +84,67 @@ class CandidatePlanner:
             
         return candidates
         
+    def generate_intersection_candidates(self, current_x, current_y, current_v, current_time, num_points=80):
+        """
+        Generates 3 mathematical Bezier curves for crossing a 4-way intersection.
+        """
+        candidates = []
+        
+        routes = [
+            {'id': 'STRAIGHT', 'target_x': 566.0, 'target_y': 50.0},
+            {'id': 'LEFT', 'target_x': 50.0, 'target_y': 366.0},
+            {'id': 'RIGHT', 'target_x': 950.0, 'target_y': 466.0}
+        ]
+        
+        for r in routes:
+            path = []
+            
+            P0 = np.array([current_x, current_y])
+            P3 = np.array([r['target_x'], r['target_y']])
+            
+            if r['id'] == 'STRAIGHT':
+                P1 = np.array([current_x, current_y - 200])
+                P2 = np.array([r['target_x'], r['target_y'] + 200])
+            elif r['id'] == 'LEFT':
+                P1 = np.array([current_x, 366.0])
+                P2 = np.array([500.0, r['target_y']])
+            elif r['id'] == 'RIGHT':
+                P1 = np.array([current_x, 466.0])
+                P2 = np.array([600.0, r['target_y']])
+                
+            for i in range(num_points):
+                t = i / (num_points - 1)
+                
+                # Cubic Bezier
+                p = ((1-t)**3)*P0 + 3*((1-t)**2)*t*P1 + 3*(1-t)*(t**2)*P2 + (t**3)*P3
+                x, y = p[0], p[1]
+                
+                if i == 0:
+                    time_t = current_time
+                else:
+                    dist = math.hypot(x - path[-1][0], y - path[-1][1])
+                    time_t = path[-1][2] + (dist / max(current_v, 1.0))
+                    
+                path.append([x, y, time_t])
+                
+            self.path_counter += 1
+            path_id = f"PATH_{self.path_counter:03d}"
+            
+            cost = 0.0
+            if r['id'] == 'LEFT': cost += 15.0 # slightly penalize turns if straight is safe
+            elif r['id'] == 'RIGHT': cost += 10.0
+                
+            candidates.append({
+                'lane_id': r['id'],
+                'path_id': path_id,
+                'path': path,
+                'cost': cost,
+                'safe': True,
+                'is_lane_change': r['id'] != 'STRAIGHT'
+            })
+            
+        return candidates
+        
     def evaluate_candidates(self, candidates, obstacles):
         """
         Scores candidates based on dynamic collision risk.

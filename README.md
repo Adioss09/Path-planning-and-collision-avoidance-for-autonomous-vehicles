@@ -35,6 +35,36 @@ python scripts/run_simulation.py --scenario market
 Available Scenarios: `unmarked`, `intersection`, `market`, `cattle`
 
 ## Documentation
+## System Architecture
+
+```mermaid
+graph TD
+    subgraph Unity Simulation Environment
+        U[Unity Client]
+        S[Sensors / State]
+        V[Vehicle Controller]
+        U --> S
+        V --> U
+    end
+
+    subgraph Python Autonomous Brain
+        WS[WebSocket Server]
+        P[Trajectory Predictor]
+        R[Risk Assessor]
+        D[Decision Engine]
+        C[Candidate Planner]
+        
+        S -- JSON State --> WS
+        WS --> P
+        P --> R
+        R --> D
+        D --> C
+        C -- JSON Trajectory --> WS
+        WS --> V
+    end
+```
+
+The system uses a strict decoupling pattern. Unity is purely responsible for physics, rendering, and sending the environment state. Python serves as the intelligence layer, computing collision risk and returning safe trajectories in real-time.
 - [Architecture](docs/ARCHITECTURE.md)
 - [Model Selection](docs/MODEL_SELECTION.md)
 - [Dataset](docs/DATASET.md)
