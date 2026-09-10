@@ -12,24 +12,36 @@ async def mock_unity_client():
             print("Connected! Simulating Unity environment...\n")
             
             for i in range(5):
-                # Build mock UnityStateMessage
+                # Build mock UnityStateMessage matching the strict Pydantic nested Vector3 schema
                 state = {
                     "timestamp": time.time(),
-                    "scenario_id": "cattle",
+                    "scenario": {
+                        "id": "cattle_crossing",
+                        "time": time.time()
+                    },
                     "vehicle": {
-                        "x": 120.0,
-                        "y": 500.0 - (i * 20),
+                        "id": "ego",
+                        "position": {
+                            "x": 120.0,
+                            "y": 0.0,
+                            "z": 500.0 - (i * 20)
+                        },
                         "heading": -1.57,
                         "speed": 35.0
                     },
                     "objects": [
                         {
                             "id": "CATTLE_01",
-                            "class": "animal",
-                            "x": 100.0,
-                            "y": 400.0,
-                            "vx": 5.0,
-                            "vy": 0.0
+                            "type": "animal",
+                            "position": {
+                                "x": 100.0,
+                                "y": 0.0,
+                                "z": 400.0
+                            },
+                            "velocity": {
+                                "x": 5.0,
+                                "z": 0.0
+                            }
                         }
                     ]
                 }
@@ -40,7 +52,7 @@ async def mock_unity_client():
                 response = await websocket.recv()
                 data = json.loads(response)
                 
-                print(f"[BRAIN] Received Decision: Risk={data.get('risk')}, Action={data.get('action')}, TargetSpeed={data.get('target_speed'):.1f}")
+                print(f"[BRAIN] Received Decision: Risk={data.get('decision', {}).get('risk')}, Action={data.get('decision', {}).get('action')}, TargetSpeed={data.get('decision', {}).get('target_speed'):.1f}")
                 print(f"[BRAIN] Trajectory Length: {len(data.get('trajectory', []))} points\n")
                 
                 await asyncio.sleep(0.5)

@@ -5,23 +5,34 @@ from typing import List, Optional
 # UNITY -> PYTHON (INCOMING STATE)
 # ==========================================
 
-class UnityVehicleState(BaseModel):
+class Vector3(BaseModel):
     x: float
     y: float
+    z: float
+
+class UnityVehicleState(BaseModel):
+    id: str = "ego"
+    position: Vector3
     heading: float
     speed: float
 
+class UnityObjectVelocity(BaseModel):
+    x: float
+    z: float
+
 class UnityObject(BaseModel):
     id: str
-    object_class: str = Field(alias="class")  # mapped to 'class' in JSON
-    x: float
-    y: float
-    vx: float
-    vy: float
+    object_type: str = Field(alias="type")  # mapped to 'type' in JSON
+    position: Vector3
+    velocity: UnityObjectVelocity
+
+class UnityScenario(BaseModel):
+    id: str
+    time: float
 
 class UnityStateMessage(BaseModel):
     timestamp: float
-    scenario_id: Optional[str] = None
+    scenario: Optional[UnityScenario] = None
     vehicle: UnityVehicleState
     objects: List[UnityObject]
 
@@ -31,13 +42,15 @@ class UnityStateMessage(BaseModel):
 
 class TrajectoryPoint(BaseModel):
     x: float
-    y: float
+    z: float
     speed: float
-    time: float
+
+class PythonDecision(BaseModel):
+    action: str
+    risk: str
+    target_speed: float
 
 class PythonCommandMessage(BaseModel):
     timestamp: float
-    risk: str
-    action: str
-    target_speed: float
+    decision: PythonDecision
     trajectory: List[TrajectoryPoint]
