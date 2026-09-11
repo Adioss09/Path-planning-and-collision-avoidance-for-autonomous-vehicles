@@ -24,7 +24,9 @@ class UnityAdapter:
             # But Unity's native Z-forward means a different angle zero-point than math standard.
             # We assume it matches for simplicity.
             'yaw': unity_msg.vehicle.heading,
-            'v': unity_msg.vehicle.speed
+            'v': unity_msg.vehicle.speed,
+            'vx': unity_msg.vehicle.speed * math.cos(unity_msg.vehicle.heading),
+            'vy': unity_msg.vehicle.speed * math.sin(unity_msg.vehicle.heading)
         }
         
         # Objects mapping

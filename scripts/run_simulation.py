@@ -4,6 +4,7 @@ import os
 import math
 import argparse
 import time
+import copy
 
 # Add src to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -31,11 +32,15 @@ CANDIDATE_BLOCKED = (200, 50, 50)
 PRED_COLOR = (255, 150, 255)
 TEXT_COLOR = (220, 220, 220)
 MARKER_COLOR = (255, 200, 0)
+PANEL_BG = (30, 32, 40)
+BUTTON_COLOR = (60, 65, 80)
+BUTTON_HOVER = (80, 85, 100)
+SELECT_COLOR = (255, 255, 0)
 
 class Simulation:
     def __init__(self, scenario_name, debug=False):
         pygame.init()
-        self.width, self.height = 1000, 800
+        self.width, self.height = 1250, 800
         self.screen = pygame.display.set_mode((self.width, self.height))
         pygame.display.set_caption(f"SIH26037 Multi-Lane Adaptive Navigation - {scenario_name.capitalize()}")
         self.clock = pygame.time.Clock()
@@ -91,6 +96,26 @@ class Simulation:
         self.prev_path_id = "NONE"
         self.replanned_markers = [] # list of (x, y, event_id)
         
+        # Interactive Testing UI State
+        self.paused = False
+        self.selected_agent = None
+        self.event_log = [] # list of strings
+        self.buttons = {} # key: action_name, value: pygame.Rect
+        
+        # Save initial state for reset
+        self.initial_state = {
+            'vehicle': copy.deepcopy(self.vehicle),
+            'obstacles': copy.deepcopy(self.obstacles),
+            'goal': self.goal
+        }
+        
+    def log_event(self, msg):
+        log_msg = f"[{self.sim_time:05.1f}s] {msg}"
+        self.event_log.append(log_msg)
+        if len(self.event_log) > 8:
+            self.event_log.pop(0)
+        print(log_msg)
+        
     def setup_scenario(self):
         self.vehicle = KinematicBicycleModel(x=120.0, y=750.0, yaw=-math.pi/2, v=40.0)
         self.obstacles = []
@@ -134,6 +159,28 @@ class Simulation:
         for obs in self.obstacles:
             obs['history'] = []
             obs['predicted_trajectory'] = []
+
+    def reset_scenario(self):
+        self.vehicle = copy.deepcopy(self.initial_state['vehicle'])
+        self.obstacles = copy.deepcopy(self.initial_state['obstacles'])
+        self.goal = self.initial_state['goal']
+        
+        self.active_path = []
+        self.historical_paths = []
+        self.all_candidates = []
+        self.current_risk = "LOW"
+        self.current_action = "CRUISE"
+        self.min_ttc = float('inf')
+        self.sim_time = 0.0
+        self.last_eval_time = -5.0
+        self.event_count = 0
+        self.replanned_markers = []
+        self.event_log = []
+        self.selected_agent = None
+        
+        self.metrics = MetricsTracker()
+        self.metrics.start_scenario((self.vehicle.x, self.vehicle.y))
+        self.log_event("SCENARIO RESET")
 
     def get_ego_predicted_trajectory(self, dt):
         traj = []
@@ -258,6 +305,9 @@ class Simulation:
             assert end_dist < 5.0, f"Path does not terminate at Goal! end_dist={end_dist:.1f}"
 
     def step(self, dt):
+        if self.paused:
+            return
+            
         self.sim_time += dt
         
         # Update obstacles
@@ -325,6 +375,11 @@ class Simulation:
                 # Always adopt the new candidate so it remains strictly attached to vehicle
                 self.active_path = best_cand['path']
                 
+                # RECOVERY FIX: If we were braking, but now we have a safe path, recover!
+                if self.current_action == 'EMERGENCY_BRAKE':
+                    self.current_action = 'SLOW_DOWN'
+                    self.replan_reason = "BRAKE RECOVERY (SAFE PATH FOUND)"
+                    
             self.last_eval_time = self.sim_time
                 
         self.metrics.update((self.vehicle.x, self.vehicle.y), self.current_risk, is_replanning, min_clear)
@@ -395,6 +450,85 @@ class Simulation:
             draw_stat("Goal X", f"{self.goal[0]:.1f}")
             draw_stat("Goal Y", f"{self.goal[1]:.1f}")
 
+    def draw_control_panel(self):
+        panel_x = self.width - 500
+        panel_rect = pygame.Rect(panel_x, 0, 250, self.height)
+        pygame.draw.rect(self.screen, (25, 27, 35), panel_rect)
+        
+        title = self.large_font.render("LIVE CONTROLS", True, (0, 200, 255))
+        self.screen.blit(title, (panel_x + 20, 20))
+        
+        y = 60
+        self.buttons.clear()
+        
+        def draw_btn(label, action):
+            nonlocal y
+            rect = pygame.Rect(panel_x + 20, y, 210, 30)
+            
+            # Simple hover effect
+            mouse_pos = pygame.mouse.get_pos()
+            color = BUTTON_HOVER if rect.collidepoint(mouse_pos) else BUTTON_COLOR
+            pygame.draw.rect(self.screen, color, rect, border_radius=5)
+            
+            text = self.font.render(label, True, TEXT_COLOR)
+            self.screen.blit(text, (panel_x + 125 - text.get_width()//2, y + 7))
+            
+            self.buttons[action] = rect
+            y += 40
+
+        # Global Controls
+        state_str = "RESUME" if self.paused else "PAUSE"
+        draw_btn(f"[ {state_str} ]", "PAUSE_TOGGLE")
+        draw_btn("[ RESET SCENARIO ]", "RESET")
+        y += 20
+        
+        # Agent Controls
+        if self.selected_agent is None:
+            inst = self.font.render("Click an agent to select", True, (150, 150, 150))
+            self.screen.blit(inst, (panel_x + 20, y))
+            y += 40
+        else:
+            obs = self.selected_agent
+            speed = math.hypot(obs['vx'], obs['vy'])
+            info_lines = [
+                f"ID: {obs['id']}",
+                f"Type: {obs['type']}",
+                f"Speed: {speed:.1f} px/s",
+                f"Pos: ({obs['x']:.0f}, {obs['y']:.0f})"
+            ]
+            for line in info_lines:
+                txt = self.font.render(line, True, SELECT_COLOR)
+                self.screen.blit(txt, (panel_x + 20, y))
+                y += 25
+                
+            y += 10
+            
+            if obs['type'] == 'animal':
+                draw_btn("[ NORMAL ]", "C_NORMAL")
+                draw_btn("[ TURN BACK ]", "C_TURN_BACK")
+                draw_btn("[ STOP ]", "C_STOP")
+                draw_btn("[ SPEED UP ]", "C_SPEED_UP")
+                draw_btn("[ SLOW DOWN ]", "C_SLOW")
+            else:
+                draw_btn("[ -5 px/s ]", "V_SLOWER")
+                draw_btn("[ +5 px/s ]", "V_FASTER")
+                draw_btn("[ SUDDEN BRAKE ]", "V_BRAKE")
+                draw_btn("[ STOP ]", "V_STOP")
+                draw_btn("[ NORMAL ]", "V_NORMAL")
+                draw_btn("[ DEVIATE PATH ]", "V_DEVIATE")
+                
+        # Event Log
+        y = self.height - 200
+        pygame.draw.line(self.screen, (100, 100, 100), (panel_x + 10, y), (panel_x + 240, y))
+        y += 10
+        log_title = self.font.render("EVENT LOG", True, (200, 200, 200))
+        self.screen.blit(log_title, (panel_x + 20, y))
+        y += 25
+        for ev in self.event_log:
+            ev_txt = self.debug_font.render(ev, True, (150, 255, 150))
+            self.screen.blit(ev_txt, (panel_x + 10, y))
+            y += 15
+
     def render(self):
         self.screen.fill(BG_COLOR)
         
@@ -403,7 +537,7 @@ class Simulation:
             # Vertical Road
             pygame.draw.rect(self.screen, ROAD_COLOR, (400, 0, 200, self.height))
             # Horizontal Road
-            pygame.draw.rect(self.screen, ROAD_COLOR, (0, 300, self.width - 250, 200))
+            pygame.draw.rect(self.screen, ROAD_COLOR, (0, 300, self.width - 500, 200))
             
             # Intersection Center Square
             pygame.draw.rect(self.screen, ROAD_COLOR, (400, 300, 200, 200))
@@ -473,6 +607,10 @@ class Simulation:
             ox, oy = int(obs['x']), int(obs['y'])
             pygame.draw.circle(self.screen, color, (ox, oy), 15)
             
+            # Highlight selected agent
+            if self.selected_agent and obs['id'] == self.selected_agent['id']:
+                pygame.draw.circle(self.screen, SELECT_COLOR, (ox, oy), 20, 2)
+            
             # Avoid overlapping text by putting it below
             label = self.font.render(obs['id'], True, (255,255,255))
             self.screen.blit(label, (ox - 30, oy + 20))
@@ -489,9 +627,72 @@ class Simulation:
         pygame.draw.circle(self.screen, EGO_COLOR, (vx, vy), 12)
         pygame.draw.line(self.screen, (255, 255, 255), (vx, vy), (end_x, end_y), 4)
         
+        self.draw_control_panel()
         self.draw_dashboard()
         pygame.display.flip()
         
+    def handle_interaction(self, action):
+        if action == "PAUSE_TOGGLE":
+            self.paused = not self.paused
+            self.log_event("PAUSED" if self.paused else "RESUMED")
+        elif action == "RESET":
+            self.reset_scenario()
+            
+        if self.selected_agent:
+            obs = self.selected_agent
+            prev_speed = math.hypot(obs['vx'], obs['vy'])
+            v_angle = math.atan2(obs['vy'], obs['vx'])
+            
+            if action == "V_FASTER" or action == "C_SPEED_UP":
+                new_speed = prev_speed + 5.0
+                obs['vx'] = new_speed * math.cos(v_angle)
+                obs['vy'] = new_speed * math.sin(v_angle)
+                self.log_event(f"{obs['id']} -> SPEED_UP")
+                self.metrics.log_intervention(self.sim_time, obs['id'], prev_speed, new_speed, "SPEED_UP")
+                
+            elif action == "V_SLOWER" or action == "C_SLOW":
+                new_speed = max(0.0, prev_speed - 5.0)
+                obs['vx'] = new_speed * math.cos(v_angle)
+                obs['vy'] = new_speed * math.sin(v_angle)
+                self.log_event(f"{obs['id']} -> SLOW_DOWN")
+                self.metrics.log_intervention(self.sim_time, obs['id'], prev_speed, new_speed, "SLOW_DOWN")
+                
+            elif action == "V_BRAKE":
+                # Sudden sharp braking (simulate halving speed abruptly)
+                new_speed = prev_speed * 0.4
+                obs['vx'] = new_speed * math.cos(v_angle)
+                obs['vy'] = new_speed * math.sin(v_angle)
+                self.log_event(f"{obs['id']} -> SUDDEN_BRAKE")
+                self.metrics.log_intervention(self.sim_time, obs['id'], prev_speed, new_speed, "SUDDEN_BRAKE")
+                
+            elif action == "V_STOP" or action == "C_STOP":
+                obs['vx'] = 0.0
+                obs['vy'] = 0.0
+                self.log_event(f"{obs['id']} -> STOPPED")
+                self.metrics.log_intervention(self.sim_time, obs['id'], prev_speed, 0.0, "STOP")
+                
+            elif action == "C_TURN_BACK":
+                obs['vx'] *= -1.0
+                obs['vy'] *= -1.0
+                self.log_event(f"{obs['id']} -> TURN_BACK")
+                self.metrics.log_intervention(self.sim_time, obs['id'], prev_speed, prev_speed, "TURN_BACK")
+                
+            elif action == "V_DEVIATE":
+                # Shift trajectory laterally
+                obs['vy'] += 15.0 if obs['vx'] > 0 else -15.0
+                self.log_event(f"{obs['id']} -> DEVIATE_PATH")
+                self.metrics.log_intervention(self.sim_time, obs['id'], prev_speed, prev_speed, "DEVIATE_PATH")
+                
+            elif action in ["V_NORMAL", "C_NORMAL"]:
+                # Recover original speed from initial state
+                initial_obs = next((o for o in self.initial_state['obstacles'] if o['id'] == obs['id']), None)
+                if initial_obs:
+                    obs['vx'] = initial_obs['vx']
+                    obs['vy'] = initial_obs['vy']
+                    orig_spd = math.hypot(obs['vx'], obs['vy'])
+                    self.log_event(f"{obs['id']} -> NORMAL")
+                    self.metrics.log_intervention(self.sim_time, obs['id'], prev_speed, orig_spd, "NORMAL")
+
     def run(self):
         running = True
         dt = 0.05
@@ -504,6 +705,33 @@ class Simulation:
                     if event.key == pygame.K_d:
                         self.debug = not self.debug
                         print(f"Debug Mode: {'ON' if self.debug else 'OFF'}")
+                elif event.type == pygame.MOUSEBUTTONDOWN:
+                    if event.button == 1: # Left click
+                        mouse_pos = event.pos
+                        
+                        # 1. Check UI Button clicks
+                        clicked_btn = False
+                        for action, rect in self.buttons.items():
+                            if rect.collidepoint(mouse_pos):
+                                self.handle_interaction(action)
+                                clicked_btn = True
+                                break
+                        
+                        # 2. Check Agent selection
+                        if not clicked_btn:
+                            mx, my = mouse_pos
+                            selected = None
+                            for obs in self.obstacles:
+                                if math.hypot(obs['x'] - mx, obs['y'] - my) < 25:
+                                    selected = obs
+                                    break
+                            
+                            if selected:
+                                self.selected_agent = selected
+                                self.log_event(f"Selected {selected['id']}")
+                            else:
+                                if mx < self.width - 500: # Only clear if clicking in sim area
+                                    self.selected_agent = None
                     
             self.step(dt)
             self.render()

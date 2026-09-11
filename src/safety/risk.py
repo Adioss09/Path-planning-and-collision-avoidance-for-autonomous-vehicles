@@ -51,35 +51,58 @@ class RiskAssessor:
             obs_pos = (obs['x'], obs['y'])
             obs_v = (obs['vx'], obs['vy'])
             
-            # Current distance
-            dist = math.hypot(obs_pos[0] - ego_pos[0], obs_pos[1] - ego_pos[1])
-            if dist < min_clear:
-                min_clear = dist
-                
-            # Instantaneous TTC
+            # Current raw Euclidean distance
+            current_dist = math.hypot(obs_pos[0] - ego_pos[0], obs_pos[1] - ego_pos[1])
+            
+            # Base TTC on velocity vectors
             ttc = self.calculate_ttc(ego_pos, ego_v, obs_pos, obs_v)
             
-            # Trajectory-based TTC (look for closest predicted points at same timestamp)
-            if ego_trajectory and obs.get('predicted_trajectory'):
-                for ep, op in zip(ego_trajectory, obs['predicted_trajectory']):
-                    traj_dist = math.hypot(ep[0] - op[0], ep[1] - op[1])
-                    if traj_dist < 40.0: # If they get within 40 pixels (e.g. 2 meters)
-                        # Estimate time to this point based on index
-                        # Assuming index maps to time steps
-                        t_to_collision = ep[2] - ego_state.get('t', 0)
-                        if 0 < t_to_collision < ttc:
-                            ttc = t_to_collision
+            traj_min_clear = float('inf')
             
+            # Trajectory-based dynamic clearance and risk
+            if ego_trajectory and obs.get('predicted_trajectory'):
+                for ep in ego_trajectory:
+                    # Find closest obstacle prediction in time
+                    closest_opt = None
+                    min_time_diff = float('inf')
+                    for opt in obs['predicted_trajectory']:
+                        time_diff = abs(opt[2] - ep[2])
+                        if time_diff < min_time_diff:
+                            min_time_diff = time_diff
+                            closest_opt = opt
+                            
+                    if closest_opt and min_time_diff < 0.5:
+                        traj_dist = math.hypot(ep[0] - closest_opt[0], ep[1] - closest_opt[1])
+                        if traj_dist < traj_min_clear:
+                            traj_min_clear = traj_dist
+                            
+                        # If a collision happens along the predicted trajectory
+                        if traj_dist < 40.0:
+                            t_to_collision = ep[2] - ego_trajectory[0][2]
+                            if 0 < t_to_collision < ttc:
+                                ttc = t_to_collision
+            else:
+                traj_min_clear = current_dist
+            
+            if traj_min_clear < min_clear:
+                min_clear = traj_min_clear
+                
             if ttc < min_ttc:
                 min_ttc = ttc
                 
-        # Determine categorical risk
-        # Note: Clearance in Pygame pixels. E.g., 100 pixels = 1.5 meters ? Let's use 60 pixels.
-        pixel_clearance = 60.0
+            # If we are physically colliding right now, it's critical regardless of trajectory
+            if current_dist < 25.0:
+                highest_risk = 'CRITICAL'
+                min_clear = current_dist
+                min_ttc = 0.0
+                return highest_risk, min_ttc, min_clear
+                
+        pixel_clearance_critical = 40.0
+        pixel_clearance_high = 60.0
         
-        if min_clear < pixel_clearance or min_ttc < self.critical_ttc:
+        if min_clear < pixel_clearance_critical or min_ttc < self.critical_ttc:
             highest_risk = 'CRITICAL'
-        elif min_ttc < self.high_ttc:
+        elif min_clear < pixel_clearance_high or min_ttc < self.high_ttc:
             highest_risk = 'HIGH'
         elif min_ttc < self.medium_ttc:
             highest_risk = 'MEDIUM'

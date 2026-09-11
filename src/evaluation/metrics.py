@@ -10,7 +10,8 @@ class MetricsTracker:
             "emergency_interventions": 0,
             "min_clearance": float('inf'),
             "path_length": 0.0,
-            "travel_time": 0.0
+            "travel_time": 0.0,
+            "manual_interventions": []
         }
         self.start_time = None
         self.last_pos = None
@@ -41,6 +42,15 @@ class MetricsTracker:
             
         if current_risk == 'CRITICAL':
             self.metrics["emergency_interventions"] += 1
+
+    def log_intervention(self, time, agent_id, previous_speed, new_speed, action):
+        self.metrics["manual_interventions"].append({
+            "time": time,
+            "agent": agent_id,
+            "previous_speed": previous_speed,
+            "new_speed": new_speed,
+            "action": action
+        })
 
     def finish_scenario(self, success=True):
         self.metrics["scenario_completed"] = success

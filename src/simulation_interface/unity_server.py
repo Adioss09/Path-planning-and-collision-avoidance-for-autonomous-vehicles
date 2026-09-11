@@ -30,12 +30,12 @@ class UnityBrainServer:
         self.decision_engine = DecisionEngine()
         self.adapter = UnityAdapter()
         
-        # Provide default abstract lanes for Unity mapping
-        self.lanes = [{'id': 1, 'x': 60.0}, {'id': 2, 'x': 120.0}, {'id': 3, 'x': 180.0}]
+        # Provide default abstract lanes for Unity mapping (Unity road is centered at X=0)
+        self.lanes = [{'id': 1, 'x': -3.5}, {'id': 2, 'x': 0.0}, {'id': 3, 'x': 3.5}]
         self.planner = CandidatePlanner(self.lanes)
         
         self.obstacle_histories = {}
-        self.last_goal = (120.0, 50.0)
+        self.last_goal = (0.0, 200.0)
 
     def process_state(self, msg: UnityStateMessage) -> PythonCommandMessage:
         # 1. Coordinate Transformation
@@ -103,6 +103,8 @@ class UnityBrainServer:
                     await websocket.send(response_msg.model_dump_json())
                     
                 except Exception as e:
+                    import traceback
+                    traceback.print_exc()
                     logger.error(f"Error processing message: {e}")
                     err_payload = {"error": str(e), "decision": {"action": "EMERGENCY_BRAKE", "risk": "CRITICAL", "target_speed": 0.0}}
                     await websocket.send(json.dumps(err_payload))
